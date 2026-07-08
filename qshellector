@@ -1,0 +1,465 @@
+#!/usr/bin/env bash
+# QShellector - QuickShell Configuration Selector
+# Auto-detects shells from ~/.config/quickshell/ and provides
+# a TUI for switching between them with persistent selection.
+#
+# Usage:
+#   qshellector              - Launch TUI selector
+#   qshellector list         - List available shells
+#   qshellector status       - Show active shell
+#   qshellector switch NAME  - Switch to shell by name
+#   qshellector restart      - Restart current shell
+#   qshellector fix-tray     - Fix system tray (D-Bus cleanup + restart)
+
+set -euo pipefail
+
+# ─── Configuration ──────────────────────────────────────────────────────────
+QS_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/quickshell"
+QSHELLECTOR_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/qshellector"
+QSHELLECTOR_ACTIVE="$QSHELLECTOR_DIR/active"
+QSHELLECTOR_KEYBINDS="$QSHELLECTOR_DIR/keybinds"
+HYPR_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
+
+# ─── Colors ─────────────────────────────────────────────────────────────────
+C_RESET='\033[0m'
+C_BOLD='\033[1m'
+C_DIM='\033[2m'
+C_CYAN='\033[36m'
+C_GREEN='\033[32m'
+C_YELLOW='\033[33m'
+C_MAGENTA='\033[35m'
+C_WHITE='\033[97m'
+C_BG_SELECT='\033[48;5;236m'
+C_ACTIVE='\033[38;5;114m'   # Soft green for active indicator
+
+# ─── Helpers ────────────────────────────────────────────────────────────────
+die() { echo -e "${C_BOLD}\033[31mError:${C_RESET} $*" >&2; exit 1; }
+info() { echo -e "${C_DIM}$*${C_RESET}"; }
+
+ensure_state_dir() {
+    mkdir -p "$QSHELLECTOR_DIR"
+    mkdir -p "$QSHELLECTOR_KEYBINDS"
+}
+
+# ─── Shell Detection ────────────────────────────────────────────────────────
+# Scans ~/.config/quickshell/ for directories containing shell.qml
+# Filters out directories ending in .old
+detect_shells() {
+    local shells=()
+    if [[ ! -d "$QS_CONFIG_DIR" ]]; then
+        die "QuickShell config directory not found: $QS_CONFIG_DIR"
+    fi
+
+    for dir in "$QS_CONFIG_DIR"/*/; do
+        [[ ! -d "$dir" ]] && continue
+        local name
+        name="$(basename "$dir")"
+
+        # Filter .old directories
+        [[ "$name" == *.old ]] && continue
+
+        # Must have shell.qml
+        if [[ -f "$dir/shell.qml" ]]; then
+            shells+=("$name")
+        fi
+    done
+
+    if [[ ${#shells[@]} -eq 0 ]]; then
+        die "No QuickShell configurations found in $QS_CONFIG_DIR"
+    fi
+
+    printf '%s\n' "${shells[@]}" | sort
+}
+
+# ─── State Management ───────────────────────────────────────────────────────
+get_active_shell() {
+    if [[ -f "$QSHELLECTOR_ACTIVE" ]]; then
+        cat "$QSHELLECTOR_ACTIVE"
+    else
+        # Try to detect from running process
+        local running
+        running=$(ps aux | grep '[q]uickshell -c' | sed 's/.*quickshell -c \([^ ]*\).*/\1/' | head -1)
+        if [[ -n "$running" ]]; then
+            echo "$running"
+        else
+            echo ""
+        fi
+    fi
+}
+
+set_active_shell() {
+    ensure_state_dir
+    echo "$1" > "$QSHELLECTOR_ACTIVE"
+}
+
+# ─── Keybind Management ─────────────────────────────────────────────────────
+# Each shell can have a keybind file at:
+#   ~/.config/qshellector/keybinds/<shell_name>.lua
+# When switching, we symlink the active keybind file to:
+#   ~/.config/hypr/qshellector/active_keybinds.lua
+# Which should be required from hyprland.lua
+activate_keybinds() {
+    local shell_name="$1"
+    local keybind_file="$QSHELLECTOR_KEYBINDS/${shell_name}.lua"
+    local hypr_qshellector_dir="$HYPR_CONFIG_DIR/qshellector"
+    local active_link="$hypr_qshellector_dir/active_keybinds.lua"
+
+    mkdir -p "$hypr_qshellector_dir"
+
+    if [[ -f "$keybind_file" ]]; then
+        # Remove old symlink/file
+        rm -f "$active_link"
+        ln -sf "$keybind_file" "$active_link"
+        info "  Keybinds: activated ${shell_name}.lua"
+    else
+        # No keybind file for this shell — create empty placeholder
+        rm -f "$active_link"
+        echo "-- QShellector: no custom keybinds for '$shell_name'" > "$active_link"
+        info "  Keybinds: no custom file for $shell_name (using empty)"
+    fi
+}
+
+# ─── Shell Switching ─────────────────────────────────────────────────────────
+do_switch() {
+    local target="$1"
+
+    # Validate target exists
+    if [[ ! -d "$QS_CONFIG_DIR/$target" ]] || [[ ! -f "$QS_CONFIG_DIR/$target/shell.qml" ]]; then
+        die "Shell '$target' not found or missing shell.qml"
+    fi
+
+    local current
+    current=$(get_active_shell)
+
+    if [[ "$current" == "$target" ]]; then
+        info "Already running '$target'. Use 'qshellector restart' to restart."
+        return 0
+    fi
+
+    echo -e "${C_CYAN}Switching:${C_RESET} ${current:-none} → ${C_BOLD}$target${C_RESET}"
+
+    # 1. Kill existing quickshell
+    echo -e "  ${C_DIM}Stopping quickshell...${C_RESET}"
+    killall qs quickshell 2>/dev/null || true
+    pkill -9 cava 2>/dev/null || true
+    sleep 1
+
+    # 2. Update state
+    set_active_shell "$target"
+
+    # 3. Activate keybinds
+    activate_keybinds "$target"
+
+    # 4. Start new shell
+    echo -e "  ${C_DIM}Starting quickshell -c $target...${C_RESET}"
+    nohup quickshell -c "$target" > /dev/null 2>&1 &
+
+    echo -e "${C_GREEN}✓${C_RESET} Switched to ${C_BOLD}$target${C_RESET}"
+}
+
+do_restart() {
+    local current
+    current=$(get_active_shell)
+
+    if [[ -z "$current" ]]; then
+        die "No active shell to restart. Use 'qshellector switch <name>' first."
+    fi
+
+    echo -e "${C_CYAN}Restarting:${C_RESET} ${C_BOLD}$current${C_RESET}"
+
+    # Kill existing
+    killall qs quickshell 2>/dev/null || true
+    pkill -9 cava 2>/dev/null || true
+    sleep 1
+
+    # Start fresh
+    nohup quickshell -c "$current" > /dev/null 2>&1 &
+
+    echo -e "${C_GREEN}✓${C_RESET} Restarted ${C_BOLD}$current${C_RESET}"
+}
+
+do_fix_tray() {
+    local current
+    current=$(get_active_shell)
+
+    if [[ -z "$current" ]]; then
+        die "No active shell. Use 'qshellector switch <name>' first."
+    fi
+
+    echo -e "${C_YELLOW}Fixing tray:${C_RESET} ${C_BOLD}$current${C_RESET}"
+
+    # 1. Kill existing quickshell
+    killall qs quickshell 2>/dev/null || true
+    pkill -9 cava 2>/dev/null || true
+
+    # 2. Clean up D-Bus StatusNotifierWatcher
+    local watcher_pid
+    watcher_pid=$(dbus-send --session --dest=org.freedesktop.DBus --type=method_call \
+        --print-reply /org/freedesktop/DBus org.freedesktop.DBus.GetConnectionUnixProcessID \
+        string:"org.kde.StatusNotifierWatcher" 2>/dev/null | grep uint32 | awk '{print $2}')
+
+    if [[ -n "$watcher_pid" ]]; then
+        echo -e "  ${C_DIM}Cleaning zombie tray watcher (PID: $watcher_pid)...${C_RESET}"
+        kill -9 "$watcher_pid" 2>/dev/null || true
+        sleep 0.5
+    fi
+
+    # 3. Wait for cleanup
+    sleep 1
+
+    # 4. Start quickshell
+    nohup quickshell -c "$current" > /dev/null 2>&1 &
+
+    # 5. Wait for init
+    sleep 2
+
+    # 6. Force re-registration
+    dbus-send --type=signal / org.freedesktop.DBus.NameOwnerChanged \
+        string:"org.kde.StatusNotifierWatcher" string:":1.dummy" string:":1.dummy2"
+
+    echo -e "${C_GREEN}✓${C_RESET} Tray fixed for ${C_BOLD}$current${C_RESET}"
+}
+
+# ─── TUI Selector ───────────────────────────────────────────────────────────
+draw_tui() {
+    local -n _shells=$1
+    local selected=$2
+    local active=$3
+    local count=${#_shells[@]}
+
+    # Clear screen and move to top
+    printf '\033[2J\033[H'
+
+    # Header
+    echo -e ""
+    echo -e "  ${C_BOLD}${C_CYAN}QShellector${C_RESET}"
+    echo -e "  ${C_DIM}QuickShell Config Selector${C_RESET}"
+    echo -e ""
+
+    # Shell list
+    for i in "${!_shells[@]}"; do
+        local name="${_shells[$i]}"
+        local prefix="  "
+        local suffix=""
+        local num=$((i + 1))
+
+        if [[ "$name" == "$active" ]]; then
+            suffix="  ${C_ACTIVE}●${C_RESET}"
+        fi
+
+        if [[ $i -eq $selected ]]; then
+            echo -e "  ${C_BG_SELECT}${C_WHITE}${C_BOLD} ❯ ${num}  ${name}${suffix} ${C_RESET}"
+        else
+            echo -e "    ${C_DIM}${num}${C_RESET}  ${name}${suffix}"
+        fi
+    done
+
+    # Footer
+    echo -e ""
+    echo -e "  ${C_DIM}↑↓ navigate  enter select  r restart  f fix-tray  q quit${C_RESET}"
+}
+
+run_tui() {
+    local shells_str
+    shells_str=$(detect_shells)
+    local shells=()
+    while IFS= read -r line; do
+        shells+=("$line")
+    done <<< "$shells_str"
+
+    local count=${#shells[@]}
+    local selected=0
+    local active
+    active=$(get_active_shell)
+
+    # Pre-select active shell
+    for i in "${!shells[@]}"; do
+        if [[ "${shells[$i]}" == "$active" ]]; then
+            selected=$i
+            break
+        fi
+    done
+
+    # Hide cursor
+    printf '\033[?25l'
+    # Restore cursor on exit
+    trap 'printf "\033[?25h"; stty sane 2>/dev/null' EXIT INT TERM
+
+    # Switch to raw mode
+    stty -echo -icanon min 1 time 0 2>/dev/null
+
+    while true; do
+        draw_tui shells "$selected" "$active"
+
+        # Read input
+        local key
+        IFS= read -rsn1 key
+
+        case "$key" in
+            $'\x1b')
+                # Escape sequence — read more
+                local seq
+                IFS= read -rsn2 -t 0.1 seq || true
+                case "$seq" in
+                    '[A') # Up arrow
+                        ((selected > 0)) && ((selected--))
+                        ;;
+                    '[B') # Down arrow
+                        ((selected < count - 1)) && ((selected++))
+                        ;;
+                    '') # Bare Escape
+                        break
+                        ;;
+                esac
+                ;;
+            'q'|'Q')
+                break
+                ;;
+            'r'|'R')
+                # Restore terminal before action
+                stty sane 2>/dev/null
+                printf '\033[?25h'
+                printf '\033[2J\033[H'
+                do_restart
+                exit 0
+                ;;
+            'f'|'F')
+                stty sane 2>/dev/null
+                printf '\033[?25h'
+                printf '\033[2J\033[H'
+                do_fix_tray
+                exit 0
+                ;;
+            '') # Enter
+                stty sane 2>/dev/null
+                printf '\033[?25h'
+                printf '\033[2J\033[H'
+                do_switch "${shells[$selected]}"
+                exit 0
+                ;;
+            [1-9])
+                local idx=$((key - 1))
+                if ((idx < count)); then
+                    stty sane 2>/dev/null
+                    printf '\033[?25h'
+                    printf '\033[2J\033[H'
+                    do_switch "${shells[$idx]}"
+                    exit 0
+                fi
+                ;;
+            'k'|'K') # vim-style up
+                ((selected > 0)) && ((selected--))
+                ;;
+            'j'|'J') # vim-style down
+                ((selected < count - 1)) && ((selected++))
+                ;;
+        esac
+    done
+
+    # Cleanup
+    printf '\033[2J\033[H'
+    stty sane 2>/dev/null
+    printf '\033[?25h'
+}
+
+# ─── CLI Commands ───────────────────────────────────────────────────────────
+cmd_list() {
+    local shells_str
+    shells_str=$(detect_shells)
+    local active
+    active=$(get_active_shell)
+
+    echo -e "${C_BOLD}Available QuickShell configurations:${C_RESET}"
+    echo ""
+
+    while IFS= read -r name; do
+        if [[ "$name" == "$active" ]]; then
+            echo -e "  ${C_ACTIVE}●${C_RESET} ${C_BOLD}$name${C_RESET}"
+        else
+            echo -e "  ${C_DIM}○${C_RESET} $name"
+        fi
+    done <<< "$shells_str"
+
+    echo ""
+}
+
+cmd_status() {
+    local active
+    active=$(get_active_shell)
+
+    if [[ -n "$active" ]]; then
+        echo -e "${C_BOLD}Active shell:${C_RESET} ${C_GREEN}$active${C_RESET}"
+
+        # Check if actually running
+        if pgrep -f "quickshell -c $active" > /dev/null 2>&1; then
+            echo -e "${C_BOLD}Status:${C_RESET} ${C_GREEN}running${C_RESET}"
+        else
+            echo -e "${C_BOLD}Status:${C_RESET} ${C_YELLOW}not running${C_RESET}"
+        fi
+    else
+        echo -e "${C_BOLD}Active shell:${C_RESET} ${C_DIM}none${C_RESET}"
+    fi
+}
+
+cmd_help() {
+    echo -e "${C_BOLD}${C_CYAN}QShellector${C_RESET} - QuickShell Config Selector"
+    echo ""
+    echo -e "${C_BOLD}Usage:${C_RESET}"
+    echo "  qshellector              Launch TUI selector"
+    echo "  qshellector list         List available shells"
+    echo "  qshellector status       Show active shell"
+    echo "  qshellector switch NAME  Switch to shell by name"
+    echo "  qshellector restart      Restart current shell"
+    echo "  qshellector fix-tray     Fix system tray (D-Bus cleanup)"
+    echo "  qshellector help         Show this help"
+    echo ""
+    echo -e "${C_BOLD}TUI Controls:${C_RESET}"
+    echo "  ↑↓ / j k    Navigate"
+    echo "  Enter        Select and switch"
+    echo "  1-9          Quick select by number"
+    echo "  r            Restart current shell"
+    echo "  f            Fix tray"
+    echo "  q / Escape   Quit"
+    echo ""
+    echo -e "${C_BOLD}Keybinds:${C_RESET}"
+    echo "  Per-shell keybind files live in:"
+    echo "  ~/.config/qshellector/keybinds/<shell_name>.lua"
+    echo ""
+    echo "  Active keybinds are symlinked to:"
+    echo "  ~/.config/hypr/qshellector/active_keybinds.lua"
+}
+
+# ─── Main ───────────────────────────────────────────────────────────────────
+main() {
+    ensure_state_dir
+
+    case "${1:-}" in
+        ""|"tui")
+            run_tui
+            ;;
+        "list"|"ls")
+            cmd_list
+            ;;
+        "status"|"st")
+            cmd_status
+            ;;
+        "switch"|"sw")
+            [[ -z "${2:-}" ]] && die "Usage: qshellector switch <name>"
+            do_switch "$2"
+            ;;
+        "restart"|"rs")
+            do_restart
+            ;;
+        "fix-tray"|"ft")
+            do_fix_tray
+            ;;
+        "help"|"-h"|"--help")
+            cmd_help
+            ;;
+        *)
+            die "Unknown command: $1\nRun 'qshellector help' for usage."
+            ;;
+    esac
+}
+
+main "$@"
