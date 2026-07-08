@@ -44,11 +44,18 @@ if [[ -d "$SCRIPT_DIR/keybinds" ]]; then
     for kb in "$SCRIPT_DIR"/keybinds/*.lua; do
         [[ ! -f "$kb" ]] && continue
         local_name="$(basename "$kb")"
-        if [[ ! -f "$KEYBINDS_DIR/$local_name" ]]; then
+        if [[ -f "$KEYBINDS_DIR/$local_name" ]]; then
+            read -p ":: Keybind $local_name already exists. Overwrite? [y/N] " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                cp -f "$kb" "$KEYBINDS_DIR/$local_name"
+                ok "Updated keybind: $local_name"
+            else
+                info "Skipped keybind: $local_name"
+            fi
+        else
             cp "$kb" "$KEYBINDS_DIR/$local_name"
             ok "Copied keybind: $local_name"
-        else
-            info "Keybind already exists, skipping: $local_name"
         fi
     done
 fi
