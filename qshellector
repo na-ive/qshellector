@@ -304,10 +304,10 @@ run_tui() {
                 IFS= read -rsn2 -t 0.1 seq || true
                 case "$seq" in
                     '[A') # Up arrow
-                        ((selected > 0)) && ((selected--))
+                        if ((selected > 0)); then ((selected--)) || true; fi
                         ;;
                     '[B') # Down arrow
-                        ((selected < count - 1)) && ((selected++))
+                        if ((selected < count - 1)); then ((selected++)) || true; fi
                         ;;
                     '') # Bare Escape
                         break
