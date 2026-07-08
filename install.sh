@@ -90,7 +90,7 @@ if [[ -f "$HYPR_EXECS" ]]; then
         cp "$HYPR_EXECS" "$HYPR_EXECS.bak"
         ok "Backup created: execs.lua.bak"
 
-        sed -i 's|hl.exec_cmd("qs -c nandoroid")|hl.exec_cmd("qs -c $(cat ~/.config/qshellector/active 2>/dev/null \\|\\| echo nandoroid)")|' "$HYPR_EXECS"
+        sed -i 's%hl.exec_cmd("qs -c nandoroid")%hl.exec_cmd("qs -c $(cat ~/.config/qshellector/active 2>/dev/null || echo nandoroid)")%' "$HYPR_EXECS"
         ok "Patched execs.lua for dynamic shell selection"
     elif grep -q 'qshellector/active' "$HYPR_EXECS"; then
         info "execs.lua already patched"
