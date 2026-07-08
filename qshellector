@@ -150,6 +150,7 @@ do_switch() {
     # 3. Activate keybinds
     activate_keybinds "$target"
 
+
     # 4. Start new shell
     echo -e "  ${C_DIM}Starting quickshell -c $target...${C_RESET}"
     nohup quickshell -c "$target" > /tmp/qshellector.log 2>&1 &
