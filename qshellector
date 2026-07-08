@@ -149,10 +149,12 @@ do_switch() {
 
     # 3. Activate keybinds
     activate_keybinds "$target"
+    echo -e "  ${C_DIM}Reloading Hyprland config to apply keybinds...${C_RESET}"
+    hyprctl reload > /dev/null 2>&1 || true
 
     # 4. Start new shell
     echo -e "  ${C_DIM}Starting quickshell -c $target...${C_RESET}"
-    nohup quickshell -c "$target" > /dev/null 2>&1 &
+    nohup quickshell -c "$target" > /tmp/qshellector.log 2>&1 &
 
     echo -e "${C_GREEN}✓${C_RESET} Switched to ${C_BOLD}$target${C_RESET}"
 }
