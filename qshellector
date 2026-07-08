@@ -149,8 +149,6 @@ do_switch() {
 
     # 3. Activate keybinds
     activate_keybinds "$target"
-    echo -e "  ${C_DIM}Reloading Hyprland config to apply keybinds...${C_RESET}"
-    hyprctl reload > /dev/null 2>&1 || true
 
     # 4. Start new shell
     echo -e "  ${C_DIM}Starting quickshell -c $target...${C_RESET}"
