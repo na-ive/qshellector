@@ -1,9 +1,9 @@
--- QShellector keybinds for: end4-pC (Illogical Impulse)
--- These keybinds are activated when end4-pC is the active shell.
+-- QShellector keybinds for: ii (Illogical Impulse)
+-- These keybinds are activated when ii is the active shell.
 -- Symlinked to ~/.config/hypr/qshellector/active_keybinds.lua on switch.
 
-local end4 = "qs -c end4-pC ipc call"
-local scripts = "~/.config/quickshell/end4-pC/scripts"
+local ii = "qs -c ii ipc call"
+local scripts = "~/.config/quickshell/ii/scripts"
 
 -- Unbind keys that will be overridden
 hl.unbind("CTRL + ALT + Delete")
@@ -42,7 +42,7 @@ hl.bind("SUPER + Super_L", hl.dsp.global("quickshell:searchToggleRelease"), { re
 hl.bind("SUPER + Tab", hl.dsp.global("quickshell:overviewWorkspacesToggle"), { description = "Shell: Toggle overview" })
 hl.bind("SUPER + N", hl.dsp.global("quickshell:sidebarRightToggle"), { description = "Shell: Toggle right sidebar" })
 hl.bind("SUPER + A", hl.dsp.global("quickshell:sidebarLeftToggle"), { description = "Shell: Toggle left sidebar" })
-hl.bind("SUPER + I", hl.dsp.exec_cmd(end4 .. " settings toggle"), { description = "Shell: Toggle settings" })
+hl.bind("SUPER + I", hl.dsp.exec_cmd(ii .. " settings toggle"), { description = "Shell: Toggle settings" })
 hl.bind("SUPER + Slash", hl.dsp.global("quickshell:cheatsheetToggle"), { description = "Shell: Toggle cheatsheet" })
 hl.bind("SUPER + K", hl.dsp.global("quickshell:oskToggle"), { description = "Shell: Toggle on-screen keyboard" })
 hl.bind("SUPER + M", hl.dsp.global("quickshell:mediaControlsToggle"), { description = "Shell: Toggle media controls" })
@@ -74,5 +74,5 @@ hl.bind("CTRL + SUPER + R", hl.dsp.exec_cmd("qshellector restart"), { descriptio
 hl.bind("CTRL + SUPER + L", hl.dsp.exec_cmd("qshellector fix-tray"))
 
 -- Brightness
-hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd(end4 .. " brightness increment"), { locked = true, repeating = true })
-hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(end4 .. " brightness decrement"), { locked = true, repeating = true })
+hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd(ii .. " brightness increment"), { locked = true, repeating = true })
+hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(ii .. " brightness decrement"), { locked = true, repeating = true })
