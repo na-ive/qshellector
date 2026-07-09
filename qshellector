@@ -131,7 +131,7 @@ get_active_shell() {
     else
         # Try to detect from running process
         local running
-        running=$(ps aux | grep -E '\b(quickshell|qs) -c' | grep -v grep | sed -E 's/.*(quickshell|qs) -c ([^ ]*).*/\2/' | head -1)
+        running=$(pgrep -a -f '\b(quickshell|qs) -c' | sed -E 's/.*(quickshell|qs) -c ([^ ]*).*/\2/' | head -1)
         if [[ -n "$running" ]]; then
             echo "$running"
         else
