@@ -90,6 +90,21 @@ qshellector detect-fonts # Re-run TUI font detection
 qshellector help         # Show help
 ```
 
+### Pop-up Terminal Keybind (Hyprland)
+
+You can configure Hyprland to launch QShellector in a centered floating terminal window. This gives you quick access to switch shells without keeping a terminal constantly open.
+
+Add the following to your Hyprland configuration:
+
+```lua
+-- Window rule for the floating terminal
+hl.window_rule({ match = { class = "^(qshellector_term)$" }, float = 1, center = 1, size = "600 550" })
+
+-- Keybind to launch the terminal (replace 'kitty ...' with your preferred terminal command, e.g., foot, alacritty)
+hl.bind("CTRL + SUPER + Q", hl.dsp.exec_cmd("kitty --class qshellector_term -e qshellector"), { description = "Open QShellector" })
+```
+
+
 
 ## Per-Shell Keybinds
 
