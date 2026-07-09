@@ -910,7 +910,7 @@ cmd_status() {
         echo -e "${C_BOLD}Active shell:${C_RESET} ${C_GREEN}$active${C_RESET}"
 
         # Check if actually running
-        if pgrep -f "quickshell -c $active" > /dev/null 2>&1; then
+        if is_shell_running "$active"; then
             echo -e "${C_BOLD}Status:${C_RESET} ${C_GREEN}running${C_RESET}"
         else
             echo -e "${C_BOLD}Status:${C_RESET} ${C_YELLOW}not running${C_RESET}"
