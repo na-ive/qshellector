@@ -735,12 +735,8 @@ draw_tui() {
 }
 
 run_tui() {
-    local shells_str
-    shells_str=$(detect_shells)
     local shells=()
-    while IFS= read -r line; do
-        shells+=("$line")
-    done <<< "$shells_str"
+    mapfile -t shells < <(detect_shells)
 
     local count=${#shells[@]}
     local selected=0
@@ -764,6 +760,8 @@ run_tui() {
     printf '\033[2J'
     # Restore cursor and main screen on exit
     trap 'printf "\033[?25h\033[?1049l"; stty sane 2>/dev/null' EXIT INT TERM
+    # Redraw on terminal resize
+    trap 'calc_layout shells; printf "\033[2J"; draw_tui shells "$selected" "$active"' WINCH
 
     # Switch to raw mode
     stty -echo -icanon min 1 time 0 2>/dev/null
@@ -773,7 +771,9 @@ run_tui() {
 
         # Read input
         local key
-        IFS= read -rsn1 key
+        if ! IFS= read -rsn1 key; then
+            continue
+        fi
 
         case "$key" in
             $'\x1b')
