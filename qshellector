@@ -496,8 +496,8 @@ draw_tui_max() {
     local active=$3
     local w=$BOX_W
 
-    printf '\033[2J\033[H'
-    (( T_PAD > 0 )) && printf '%.0s\n' $(seq 1 "$T_PAD")
+    printf '\033[H'
+    (( T_PAD > 0 )) && printf '\033[K\n%.0s' $(seq 1 "$T_PAD")
 
     # ── Outer border top
     box_top "$w"
@@ -613,6 +613,7 @@ draw_tui_max() {
     box_empty "$w"
 
     box_bottom "$w"
+    printf '\033[J'
 }
 
 # ─── TUI: Minimal Mode ─────────────────────────────────────────────────────
@@ -622,8 +623,8 @@ draw_tui_min() {
     local active=$3
     local w=$BOX_W
 
-    printf '\033[2J\033[H'
-    (( T_PAD > 0 )) && printf '%.0s\n' $(seq 1 "$T_PAD")
+    printf '\033[H'
+    (( T_PAD > 0 )) && printf '\033[K\n%.0s' $(seq 1 "$T_PAD")
 
     # Center the content
     echo ""
@@ -721,6 +722,7 @@ draw_tui_min() {
     printf "${L_PAD}   "
     echo -e "${C_DIM}f fix-tray  q quit${C_RESET}"
     echo ""
+    printf '\033[J'
 }
 
 # ─── TUI Dispatcher ────────────────────────────────────────────────────────
@@ -756,10 +758,12 @@ run_tui() {
     # Calculate layout (sets BOX_W, L_PAD, T_PAD, DISPLAY_COUNT)
     calc_layout shells
 
-    # Hide cursor
-    printf '\033[?25l'
-    # Restore cursor on exit
-    trap 'printf "\033[?25h"; stty sane 2>/dev/null' EXIT INT TERM
+    # Switch to alternate screen, hide cursor
+    printf '\033[?1049h\033[?25l'
+    # Clear screen initially
+    printf '\033[2J'
+    # Restore cursor and main screen on exit
+    trap 'printf "\033[?25h\033[?1049l"; stty sane 2>/dev/null' EXIT INT TERM
 
     # Switch to raw mode
     stty -echo -icanon min 1 time 0 2>/dev/null
