@@ -25,6 +25,28 @@ The installer will:
 2. Set up `~/.config/qshellector/` with default keybinds
 3. Detect your currently running shell
 
+### Shell Completions
+
+Completions for Bash, Zsh, and Fish are provided in the `completions/` directory.
+
+**Bash:**
+```bash
+sudo cp completions/qshellector.bash /usr/share/bash-completion/completions/qshellector
+# Or source it in your ~/.bashrc:
+# source /path/to/QShellector/completions/qshellector.bash
+```
+
+**Zsh:**
+```zsh
+sudo cp completions/_qshellector /usr/share/zsh/site-functions/
+# Then restart your shell or run `compinit`
+```
+
+**Fish:**
+```fish
+cp completions/qshellector.fish ~/.config/fish/completions/
+```
+
 ### Uninstall
 
 ```bash

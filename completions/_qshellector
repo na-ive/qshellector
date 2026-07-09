@@ -1,0 +1,37 @@
+#compdef qshellector
+
+_qshellector() {
+    local line state
+
+    _arguments -C \
+        "1: :->cmds" \
+        "*::arg:->args"
+
+    case "$state" in
+        cmds)
+            local commands; commands=(
+                "list:List available shells"
+                "status:Show active shell"
+                "switch:Switch to a specific shell"
+                "detect-fonts:Detect and configure font mode"
+                "restart:Restart the active shell"
+                "fix-tray:Fix system tray issues"
+                "help:Show help"
+            )
+            _describe -t commands 'qshellector command' commands
+            ;;
+        args)
+            case $line[1] in
+                switch)
+                    local shells
+                    if [[ -d ~/.config/quickshell ]]; then
+                        shells=($(find -L ~/.config/quickshell -mindepth 1 -maxdepth 1 -type d ! -name "*.old" -exec basename {} \; 2>/dev/null))
+                        _describe -t shells 'available shells' shells
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_qshellector "$@"
