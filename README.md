@@ -15,7 +15,7 @@ A lightweight CLI tool to switch between [QuickShell](https://quickshell.outfoxx
 ## Installation
 
 ```bash
-git clone https://github.com/youruser/QShellector.git
+git clone https://github.com/na-ive/qshellector.git
 cd QShellector
 ./install.sh
 ```
