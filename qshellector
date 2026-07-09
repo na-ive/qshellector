@@ -10,6 +10,7 @@
 #   qshellector switch NAME  - Switch to shell by name
 #   qshellector restart      - Restart current shell
 #   qshellector fix-tray     - Fix system tray (D-Bus cleanup + restart)
+#   qshellector detect-fonts - Re-run font/icon detection for TUI mode
 
 set -euo pipefail
 
@@ -20,7 +21,7 @@ QSHELLECTOR_ACTIVE="$QSHELLECTOR_DIR/active"
 QSHELLECTOR_KEYBINDS="$QSHELLECTOR_DIR/keybinds"
 HYPR_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
 
-# ─── Colors ─────────────────────────────────────────────────────────────────
+# ─── Colors (uses terminal theme colors only) ──────────────────────────────
 C_RESET='\033[0m'
 C_BOLD='\033[1m'
 C_DIM='\033[2m'
@@ -29,8 +30,48 @@ C_GREEN='\033[32m'
 C_YELLOW='\033[33m'
 C_MAGENTA='\033[35m'
 C_WHITE='\033[97m'
-C_BG_SELECT='\033[48;5;236m'
-C_ACTIVE='\033[38;5;114m'   # Soft green for active indicator
+C_ACTIVE='\033[32m'      # Standard terminal green for active indicator
+
+# ─── TUI Mode Detection ────────────────────────────────────────────────────
+TUI_MODE="minimal"
+if [[ -f "$QSHELLECTOR_DIR/tui_mode" ]]; then
+    TUI_MODE="$(cat "$QSHELLECTOR_DIR/tui_mode" 2>/dev/null || echo "minimal")"
+fi
+
+# ─── Maximal Mode Styling ──────────────────────────────────────────────────
+C_BORDER='\033[2m'           # dim for borders (uses terminal fg)
+C_INNER='\033[2m'            # dim for inner panel
+
+# ─── Nerd Font Icons (maximal mode) ─────────────────────────────────────────
+ICON_SHELL='󱂬'     # nf-md-bash
+ICON_SELECT='❯'    # selection arrow
+ICON_RUNNING='●'
+ICON_STOPPED='○'
+
+# ─── ASCII Fallbacks (minimal mode) ─────────────────────────────────────────
+ASCII_SELECT='>'
+ASCII_RUNNING='*'
+ASCII_STOPPED=' '
+
+# ─── Figlet Art ─────────────────────────────────────────────────────────────
+# "QSHELL" in Unicode block style (maximal mode)
+FIGLET_MAX=(
+    ' ██████╗ ███████╗██╗  ██╗███████╗██╗     ██╗     '
+    '██╔═══██╗██╔════╝██║  ██║██╔════╝██║     ██║     '
+    '██║   ██║███████╗███████║█████╗  ██║     ██║     '
+    '██║▄▄ ██║╚════██║██╔══██║██╔══╝  ██║     ██║     '
+    '╚██████╔╝███████║██║  ██║███████╗███████╗███████╗'
+    ' ╚══▀▀═╝ ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝'
+)
+
+# "QSHELL" in pure ASCII art (minimal mode)
+FIGLET_MIN=(
+    '  ___  ____  _   _ _____ _     _     '
+    ' / _ \/ ___|| | | | ____| |   | |    '
+    '| | | \___ \| |_| |  _| | |   | |    '
+    '| |_| |___) |  _  | |___| |___| |___ '
+    ' \__\_\____/|_| |_|_____|_____|_____|'
+)
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 die() { echo -e "${C_BOLD}\033[31mError:${C_RESET} $*" >&2; exit 1; }
@@ -39,6 +80,16 @@ info() { echo -e "${C_DIM}$*${C_RESET}"; }
 ensure_state_dir() {
     mkdir -p "$QSHELLECTOR_DIR"
     mkdir -p "$QSHELLECTOR_KEYBINDS"
+}
+
+# Measure visible display width of a string (handles Unicode widths correctly)
+vis_width() {
+    printf '%s' "$1" | wc -L
+}
+
+# Generate a string of N spaces
+spaces() {
+    printf '%*s' "$1" ''
 }
 
 # ─── Shell Detection ────────────────────────────────────────────────────────
@@ -78,7 +129,7 @@ get_active_shell() {
     else
         # Try to detect from running process
         local running
-        running=$(ps aux | grep '[q]uickshell -c' | sed 's/.*quickshell -c \([^ ]*\).*/\1/' | head -1)
+        running=$(ps aux | grep -E '\b(quickshell|qs) -c' | grep -v grep | sed -E 's/.*(quickshell|qs) -c ([^ ]*).*/\2/' | head -1)
         if [[ -n "$running" ]]; then
             echo "$running"
         else
@@ -141,7 +192,6 @@ do_switch() {
     # 1. Kill existing quickshell
     echo -e "  ${C_DIM}Stopping quickshell...${C_RESET}"
     killall qs quickshell 2>/dev/null || true
-    pkill -9 cava 2>/dev/null || true
     sleep 1
 
     # 2. Update state
@@ -170,7 +220,6 @@ do_restart() {
 
     # Kill existing
     killall qs quickshell 2>/dev/null || true
-    pkill -9 cava 2>/dev/null || true
     sleep 1
 
     # Start fresh
@@ -191,7 +240,6 @@ do_fix_tray() {
 
     # 1. Kill existing quickshell
     killall qs quickshell 2>/dev/null || true
-    pkill -9 cava 2>/dev/null || true
 
     # 2. Clean up D-Bus StatusNotifierWatcher
     local watcher_pid
@@ -221,43 +269,452 @@ do_fix_tray() {
     echo -e "${C_GREEN}✓${C_RESET} Tray fixed for ${C_BOLD}$current${C_RESET}"
 }
 
-# ─── TUI Selector ───────────────────────────────────────────────────────────
-draw_tui() {
-    local -n _shells=$1
-    local selected=$2
-    local active=$3
-    local count=${#_shells[@]}
+# ─── Check Process Status ───────────────────────────────────────────────────
+is_shell_running() {
+    local name="$1"
+    pgrep -f "(quickshell|qs) -c $name" > /dev/null 2>&1
+}
 
-    # Clear screen and move to top
-    printf '\033[2J\033[H'
+# ─── Width & Centering ──────────────────────────────────────────────────────
+# Pre-compute icon display widths at startup (measured, not assumed)
+ICON_SHELL_W=0
+ICON_SELECT_W=0
+ICON_RUNNING_W=0
 
-    # Header
-    echo -e ""
-    echo -e "  ${C_BOLD}${C_CYAN}QShellector${C_RESET}"
-    echo -e "  ${C_DIM}QuickShell Config Selector${C_RESET}"
-    echo -e ""
+precompute_icon_widths() {
+    ICON_SHELL_W=$(vis_width "$ICON_SHELL")
+    ICON_SELECT_W=$(vis_width "$ICON_SELECT")
+    ICON_RUNNING_W=$(vis_width "$ICON_RUNNING")
+}
 
-    # Shell list
-    for i in "${!_shells[@]}"; do
-        local name="${_shells[$i]}"
-        local prefix="  "
-        local suffix=""
-        local num=$((i + 1))
+calc_layout() {
+    local -n _cl_shells=$1
+    local term_width
+    term_width=$(tput cols 2>/dev/null || echo 80)
+    local term_height
+    term_height=$(tput lines 2>/dev/null || echo 24)
 
-        if [[ "$name" == "$active" ]]; then
-            suffix="  ${C_ACTIVE}●${C_RESET}"
-        fi
+    # Calculate scrolling window size based on available terminal height
+    local num_shells=${#_cl_shells[@]}
+    local non_list_h=0
+    if [[ "$TUI_MODE" == "maximal" ]]; then
+        non_list_h=17  # Headers, footers, and padding lines
+    else
+        non_list_h=13
+    fi
+    local max_list=$(( term_height - non_list_h - 2 ))
+    (( max_list > 5 )) && max_list=5
+    (( max_list < 3 )) && max_list=3
 
-        if [[ $i -eq $selected ]]; then
-            echo -e "  ${C_BG_SELECT}${C_WHITE}${C_BOLD} ❯ ${num}  ${name}${suffix} ${C_RESET}"
-        else
-            echo -e "    ${C_DIM}${num}${C_RESET}  ${name}${suffix}"
+    local display_count=$num_shells
+    if (( num_shells > max_list )); then
+        display_count=$max_list
+    fi
+
+    # Find longest shell name
+    local max_name=0
+    for name in "${_cl_shells[@]}"; do
+        if (( ${#name} > max_name )); then
+            max_name=${#name}
         fi
     done
 
-    # Footer
-    echo -e ""
-    echo -e "  ${C_DIM}↑↓ navigate  enter select  r restart  f fix-tray  q quit${C_RESET}"
+    local box_w
+    if [[ "$TUI_MODE" == "maximal" ]]; then
+        precompute_icon_widths
+
+        # Inner line: "  ❯  󱂬  name          ● running "
+        local inner_content_w=$(( 2 + ICON_SELECT_W + 2 + ICON_SHELL_W + 2 + max_name + 4 + ICON_RUNNING_W + 8 + 1 ))
+
+        # Figlet display width
+        local figlet_w
+        figlet_w=$(vis_width "${FIGLET_MAX[0]}")
+
+        # Box width
+        local from_figlet=$(( figlet_w + 6 ))
+        local from_inner=$(( inner_content_w + 8 ))
+        box_w=$(( from_figlet > from_inner ? from_figlet : from_inner ))
+
+        (( box_w < 56 )) && box_w=56
+        (( box_w > term_width - 4 )) && box_w=$(( term_width - 4 ))
+    else
+        local figlet_w
+        figlet_w=$(vis_width "${FIGLET_MIN[0]}")
+        box_w=$(( max_name + 28 ))
+        if (( figlet_w + 4 > box_w )); then
+            box_w=$(( figlet_w + 4 ))
+        fi
+        (( box_w < 42 )) && box_w=42
+        (( box_w > term_width - 2 )) && box_w=$(( term_width - 2 ))
+    fi
+
+    # Centering width calculation
+    local total_w
+    if [[ "$TUI_MODE" == "maximal" ]]; then
+        total_w=$(( box_w + 2 ))  # box content + left│ + right│
+    else
+        total_w=$box_w
+    fi
+    local left_pad=$(( (term_width - total_w) / 2 ))
+    (( left_pad < 0 )) && left_pad=0
+
+    # Vertical centering padding
+    local content_h=$(( non_list_h + display_count ))
+    local top_pad=$(( (term_height - content_h) / 2 ))
+    (( top_pad < 0 )) && top_pad=0
+
+    # Export results
+    BOX_W=$box_w
+    L_PAD="$(spaces "$left_pad")"
+    T_PAD="$top_pad"
+    DISPLAY_COUNT="$display_count"
+}
+
+# ─── Box Drawing Helpers (maximal mode) ─────────────────────────────────────
+box_top() {
+    local w=$1
+    printf "${L_PAD}${C_BORDER}╭"
+    printf '─%.0s' $(seq 1 "$w")
+    printf "╮${C_RESET}\n"
+}
+
+box_bottom() {
+    local w=$1
+    printf "${L_PAD}${C_BORDER}╰"
+    printf '─%.0s' $(seq 1 "$w")
+    printf "╯${C_RESET}\n"
+}
+
+box_empty() {
+    local w=$1
+    printf "${L_PAD}${C_BORDER}│${C_RESET}"
+    printf '%*s' "$w" ''
+    printf "${C_BORDER}│${C_RESET}\n"
+}
+
+# Print a line inside the outer box. content_w = visible columns of content.
+box_line() {
+    local w=$1
+    local content="$2"
+    local content_w=$3
+    local padding=$(( w - content_w ))
+    printf "${L_PAD}${C_BORDER}│${C_RESET}"
+    printf '%b' "$content"
+    (( padding > 0 )) && printf '%*s' "$padding" ''
+    printf "${C_BORDER}│${C_RESET}\n"
+}
+
+# Inner panel borders
+inner_top() {
+    local w=$1
+    local scroll_up=${2:-false}
+    local pad=3
+    local inner_w=$(( w - pad * 2 ))
+    local lines_w=$(( inner_w - 2 ))
+    printf "${L_PAD}${C_BORDER}│${C_RESET}"
+    spaces "$pad"
+    printf "${C_INNER}┌"
+    
+    if [[ "$scroll_up" == true ]]; then
+        local left=$(( (lines_w - 3) / 2 ))
+        local right=$(( lines_w - 3 - left ))
+        for (( i=0; i<left; i++ )); do printf '─'; done
+        printf " ${C_CYAN}▲${C_RESET}${C_INNER} "
+        for (( i=0; i<right; i++ )); do printf '─'; done
+    else
+        for (( i=0; i<lines_w; i++ )); do printf '─'; done
+    fi
+    
+    printf "┐${C_RESET}"
+    spaces "$pad"
+    printf "${C_BORDER}│${C_RESET}\n"
+}
+
+inner_bottom() {
+    local w=$1
+    local scroll_down=${2:-false}
+    local pad=3
+    local inner_w=$(( w - pad * 2 ))
+    local lines_w=$(( inner_w - 2 ))
+    printf "${L_PAD}${C_BORDER}│${C_RESET}"
+    spaces "$pad"
+    printf "${C_INNER}└"
+    
+    if [[ "$scroll_down" == true ]]; then
+        local left=$(( (lines_w - 3) / 2 ))
+        local right=$(( lines_w - 3 - left ))
+        for (( i=0; i<left; i++ )); do printf '─'; done
+        printf " ${C_CYAN}▼${C_RESET}${C_INNER} "
+        for (( i=0; i<right; i++ )); do printf '─'; done
+    else
+        for (( i=0; i<lines_w; i++ )); do printf '─'; done
+    fi
+    
+    printf "┘${C_RESET}"
+    spaces "$pad"
+    printf "${C_BORDER}│${C_RESET}\n"
+}
+
+inner_line() {
+    local w=$1
+    local content="$2"
+    local content_w=$3
+    local pad=3
+    local inner_w=$(( w - pad * 2 ))
+    local content_space=$(( inner_w - 2 ))
+    local right_pad=$(( content_space - content_w ))
+
+    printf "${L_PAD}${C_BORDER}│${C_RESET}"
+    spaces "$pad"
+    printf "${C_INNER}│${C_RESET}"
+    printf '%b' "$content"
+    (( right_pad > 0 )) && spaces "$right_pad"
+    printf "${C_INNER}│${C_RESET}"
+    spaces "$pad"
+    printf "${C_BORDER}│${C_RESET}\n"
+}
+
+# ─── TUI: Maximal Mode ─────────────────────────────────────────────────────
+draw_tui_max() {
+    local -n _shells_max=$1
+    local selected=$2
+    local active=$3
+    local w=$BOX_W
+
+    printf '\033[2J\033[H'
+    (( T_PAD > 0 )) && printf '%.0s\n' $(seq 1 "$T_PAD")
+
+    # ── Outer border top
+    box_top "$w"
+    box_empty "$w"
+
+    # ── Figlet header (terminal cyan, no forced gradient)
+    for i in "${!FIGLET_MAX[@]}"; do
+        local figlet_line="${FIGLET_MAX[$i]}"
+        local figlet_vis_w
+        figlet_vis_w=$(vis_width "$figlet_line")
+        local padded="   ${figlet_line}"
+        local padded_vis_w=$(( figlet_vis_w + 3 ))
+        box_line "$w" "${C_CYAN}${C_BOLD}${padded}${C_RESET}" "$padded_vis_w"
+    done
+
+    # ── Subtitle
+    local subtitle="   QuickShell Config Selector"
+    box_line "$w" "${C_DIM}${subtitle}${C_RESET}" "${#subtitle}"
+    box_empty "$w"
+
+    # ── Inner panel
+    local has_more_up=false
+    local has_more_down=false
+    local start_idx=$(( selected - DISPLAY_COUNT / 2 ))
+    (( start_idx < 0 )) && start_idx=0
+    if (( start_idx + DISPLAY_COUNT > ${#_shells_max[@]} )); then
+        start_idx=$(( ${#_shells_max[@]} - DISPLAY_COUNT ))
+        (( start_idx < 0 )) && start_idx=0
+    fi
+    local end_idx=$(( start_idx + DISPLAY_COUNT - 1 ))
+    (( start_idx > 0 )) && has_more_up=true
+    (( end_idx < ${#_shells_max[@]} - 1 )) && has_more_down=true
+
+    inner_top "$w" "$has_more_up"
+
+    local pad=3
+    local inner_w=$(( w - pad * 2 ))
+
+
+    for i in $(seq "$start_idx" "$end_idx"); do
+        local name="${_shells_max[$i]}"
+        local is_active=false
+        local is_running=false
+
+        [[ "$name" == "$active" ]] && is_active=true
+        is_shell_running "$name" && is_running=true
+
+        # Build status indicator
+        local status_str=""
+        local status_vis_w=0
+        if [[ "$is_active" == true ]]; then
+            if [[ "$is_running" == true ]]; then
+                status_str="${C_ACTIVE}${ICON_RUNNING} running${C_RESET}"
+                status_vis_w=$(( ICON_RUNNING_W + 8 ))  # icon + " running"
+            else
+                status_str="${C_DIM}${ICON_STOPPED} stopped${C_RESET}"
+                status_vis_w=$(( ICON_RUNNING_W + 8 ))
+            fi
+        fi
+
+        # Build prefix: "  ❯  " or "     "
+        local prefix prefix_vis_w
+        if [[ $i -eq $selected ]]; then
+            # We ONLY use the cyan bold icon here, no background color
+            prefix="  ${C_CYAN}${C_BOLD}${ICON_SELECT}${C_RESET}  "
+            prefix_vis_w=$(( 2 + ICON_SELECT_W + 2 ))
+        else
+            prefix_vis_w=$(( 2 + ICON_SELECT_W + 2 ))
+            prefix="$(spaces "$prefix_vis_w")"
+        fi
+
+        # Icon + name
+        local icon_str="${C_CYAN}${ICON_SHELL}${C_RESET}  "
+        local icon_vis_w=$(( ICON_SHELL_W + 2 ))
+
+        local name_str
+        if [[ $i -eq $selected ]]; then
+            name_str="${C_WHITE}${C_BOLD}${name}${C_RESET}"
+        else
+            name_str="${C_DIM}${name}${C_RESET}"
+        fi
+        local name_vis_w=${#name}
+
+        local total_vis_w=$(( prefix_vis_w + icon_vis_w + name_vis_w ))
+
+        # Assemble line
+        local line_content line_vis_w
+        if [[ -n "$status_str" ]]; then
+            local inner_content_space=$(( inner_w - 2 ))
+            local gap=$(( inner_content_space - total_vis_w - status_vis_w ))
+            (( gap < 2 )) && gap=2
+            line_content="${prefix}${icon_str}${name_str}$(spaces "$gap")${status_str}"
+            line_vis_w=$(( total_vis_w + gap + status_vis_w ))
+        else
+            line_content="${prefix}${icon_str}${name_str}"
+            line_vis_w=$total_vis_w
+        fi
+
+        # Always use inner_line (no background highlights)
+        inner_line "$w" "$line_content" "$line_vis_w"
+    done
+
+    inner_bottom "$w" "$has_more_down"
+    box_empty "$w"
+
+    # ── Footer
+    local footer1="   ↑↓ navigate · ⏎ select · r restart"
+    local footer1_vis_w
+    footer1_vis_w=$(vis_width "$footer1")
+    local footer2="   f fix-tray · q quit"
+    box_line "$w" "${C_DIM}${footer1}${C_RESET}" "$footer1_vis_w"
+    box_line "$w" "${C_DIM}${footer2}${C_RESET}" "${#footer2}"
+    box_empty "$w"
+
+    box_bottom "$w"
+}
+
+# ─── TUI: Minimal Mode ─────────────────────────────────────────────────────
+draw_tui_min() {
+    local -n _shells_min=$1
+    local selected=$2
+    local active=$3
+    local w=$BOX_W
+
+    printf '\033[2J\033[H'
+    (( T_PAD > 0 )) && printf '%.0s\n' $(seq 1 "$T_PAD")
+
+    # Center the content
+    echo ""
+
+    # ── Figlet header (centered)
+    for line in "${FIGLET_MIN[@]}"; do
+        local line_w
+        line_w=$(vis_width "$line")
+        local line_pad=$(( (w - line_w) / 2 ))
+        (( line_pad < 0 )) && line_pad=0
+        printf "${L_PAD}"
+        spaces "$line_pad"
+        echo -e "${C_BOLD}${C_CYAN}${line}${C_RESET}"
+    done
+    echo ""
+
+    # ── Subtitle (centered)
+    local sub="QuickShell Config Selector"
+    local sub_pad=$(( (w - ${#sub}) / 2 ))
+    (( sub_pad < 0 )) && sub_pad=0
+    printf "${L_PAD}"
+    spaces "$sub_pad"
+    echo -e "${C_DIM}${sub}${C_RESET}"
+    echo ""
+
+
+    local has_more_up=false
+    local has_more_down=false
+    (( start_idx > 0 )) && has_more_up=true
+    (( end_idx < ${#_shells_min[@]} - 1 )) && has_more_down=true
+
+    if [[ "$has_more_up" == true ]]; then
+        printf "${L_PAD}   "
+        echo -e "${C_CYAN}  ▲${C_RESET}"
+    else
+        echo ""
+    fi
+
+    # ── Shell list
+    for i in $(seq "$start_idx" "$end_idx"); do
+        local name="${_shells_min[$i]}"
+        local num=$(( i + 1 ))
+        local is_active=false
+        local is_running=false
+
+        [[ "$name" == "$active" ]] && is_active=true
+        is_shell_running "$name" && is_running=true
+
+        # Build status
+        local status_str=""
+        if [[ "$is_active" == true ]]; then
+            if [[ "$is_running" == true ]]; then
+                status_str="${C_ACTIVE}${ASCII_RUNNING} running${C_RESET}"
+            else
+                status_str="${C_DIM}  stopped${C_RESET}"
+            fi
+        fi
+
+        # Build line
+        local prefix
+        if [[ $i -eq $selected ]]; then
+            prefix="${C_BOLD}${C_CYAN}${ASCII_SELECT}${C_RESET} "
+        else
+            prefix="  "
+        fi
+
+        local name_str
+        if [[ $i -eq $selected ]]; then
+            name_str="${C_BOLD}${C_WHITE}${num}  ${name}${C_RESET}"
+        else
+            name_str="${C_DIM}${num}${C_RESET}  ${name}"
+        fi
+
+        printf "${L_PAD}   "
+        if [[ -n "$status_str" ]]; then
+            local name_part_len=$(( 3 + ${#name} ))
+            local gap=$(( w - 5 - name_part_len - 9 ))
+            (( gap < 2 )) && gap=2
+            echo -e "${prefix}${name_str}$(spaces "$gap")${status_str}"
+        else
+            echo -e "${prefix}${name_str}"
+        fi
+    done
+
+    if [[ "$has_more_down" == true ]]; then
+        printf "${L_PAD}   "
+        echo -e "${C_CYAN}  ▼${C_RESET}"
+    else
+        echo ""
+    fi
+
+    # ── Footer (centered)
+    printf "${L_PAD}   "
+    echo -e "${C_DIM}Up/Dn navigate  Enter select  r restart${C_RESET}"
+    printf "${L_PAD}   "
+    echo -e "${C_DIM}f fix-tray  q quit${C_RESET}"
+    echo ""
+}
+
+# ─── TUI Dispatcher ────────────────────────────────────────────────────────
+draw_tui() {
+    if [[ "$TUI_MODE" == "maximal" ]]; then
+        draw_tui_max "$@"
+    else
+        draw_tui_min "$@"
+    fi
 }
 
 run_tui() {
@@ -280,6 +737,9 @@ run_tui() {
             break
         fi
     done
+
+    # Calculate layout (sets BOX_W, L_PAD, T_PAD, DISPLAY_COUNT)
+    calc_layout shells
 
     # Hide cursor
     printf '\033[?25l'
@@ -363,6 +823,45 @@ run_tui() {
     printf '\033[?25h'
 }
 
+# ─── Font Detection ────────────────────────────────────────────────────────
+cmd_detect_fonts() {
+    echo -e ""
+    echo -e "${C_BOLD}${C_CYAN}QShellector — Font Detection${C_RESET}"
+    echo -e ""
+    echo -e "  This checks if your terminal supports Nerd Font icons"
+    echo -e "  and Unicode box-drawing characters."
+    echo -e ""
+    echo -e "  ${C_BOLD}Test line:${C_RESET}  󰆍 󱂬  ╭─╮ │ ╰─╯  ❯ ● ○"
+    echo -e ""
+    echo -e "  If the line above shows ${C_BOLD}icons, arrows, and borders${C_RESET}"
+    echo -e "  cleanly (no boxes, no missing glyphs), answer ${C_GREEN}y${C_RESET}."
+    echo -e ""
+    echo -e "  If you see ${C_YELLOW}empty rectangles${C_RESET} or ${C_YELLOW}question marks${C_RESET},"
+    echo -e "  answer ${C_YELLOW}n${C_RESET} for the clean ASCII mode."
+    echo -e ""
+
+    read -p "  Do the icons and borders display correctly? [y/N] " -n 1 -r
+    echo ""
+
+    ensure_state_dir
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "maximal" > "$QSHELLECTOR_DIR/tui_mode"
+        TUI_MODE="maximal"
+        echo -e ""
+        echo -e "  ${C_GREEN}✓${C_RESET} TUI mode set to ${C_BOLD}maximal${C_RESET} (borders + icons)"
+    else
+        echo "minimal" > "$QSHELLECTOR_DIR/tui_mode"
+        TUI_MODE="minimal"
+        echo -e ""
+        echo -e "  ${C_GREEN}✓${C_RESET} TUI mode set to ${C_BOLD}minimal${C_RESET} (clean ASCII)"
+    fi
+
+    echo -e "  ${C_DIM}Saved to: $QSHELLECTOR_DIR/tui_mode${C_RESET}"
+    echo -e "  ${C_DIM}Run 'qshellector detect-fonts' to change later.${C_RESET}"
+    echo -e ""
+}
+
 # ─── CLI Commands ───────────────────────────────────────────────────────────
 cmd_list() {
     local shells_str
@@ -412,6 +911,7 @@ cmd_help() {
     echo "  qshellector switch NAME  Switch to shell by name"
     echo "  qshellector restart      Restart current shell"
     echo "  qshellector fix-tray     Fix system tray (D-Bus cleanup)"
+    echo "  qshellector detect-fonts Re-run TUI font detection"
     echo "  qshellector help         Show this help"
     echo ""
     echo -e "${C_BOLD}TUI Controls:${C_RESET}"
@@ -428,6 +928,9 @@ cmd_help() {
     echo ""
     echo "  Active keybinds are symlinked to:"
     echo "  ~/.config/hypr/qshellector/active_keybinds.lua"
+    echo ""
+    echo -e "${C_BOLD}TUI Mode:${C_RESET} ${TUI_MODE}"
+    echo "  Run 'qshellector detect-fonts' to change."
 }
 
 # ─── Main ───────────────────────────────────────────────────────────────────
@@ -453,6 +956,9 @@ main() {
             ;;
         "fix-tray"|"ft")
             do_fix_tray
+            ;;
+        "detect-fonts"|"df")
+            cmd_detect_fonts
             ;;
         "help"|"-h"|"--help")
             cmd_help
