@@ -16,6 +16,7 @@ _qshellector() {
                 "detect-fonts:Detect and configure font mode"
                 "restart:Restart the active shell"
                 "fix-tray:Fix system tray issues"
+                "log:Tail the active shell's log"
                 "help:Show help"
             )
             _describe -t commands 'qshellector command' commands

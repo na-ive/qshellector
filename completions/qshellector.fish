@@ -20,6 +20,7 @@ complete -f -c qshellector -n "__qshellector_needs_command" -a switch -d "Switch
 complete -f -c qshellector -n "__qshellector_needs_command" -a detect-fonts -d "Detect and configure font mode"
 complete -f -c qshellector -n "__qshellector_needs_command" -a restart -d "Restart the active shell"
 complete -f -c qshellector -n "__qshellector_needs_command" -a fix-tray -d "Fix system tray issues"
+complete -f -c qshellector -n "__qshellector_needs_command" -a log -d "Tail the active shell's log"
 complete -f -c qshellector -n "__qshellector_needs_command" -a help -d "Show help"
 
 complete -f -c qshellector -n "contains switch (commandline -opc)" -a "(__qshellector_get_shells)"

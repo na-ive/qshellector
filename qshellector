@@ -11,6 +11,7 @@
 #   qshellector restart      - Restart current shell
 #   qshellector fix-tray     - Fix system tray (D-Bus cleanup + restart)
 #   qshellector detect-fonts - Re-run font/icon detection for TUI mode
+#   qshellector log          - Tail the active shell's log
 
 set -euo pipefail
 
@@ -19,6 +20,7 @@ QS_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/quickshell"
 QSHELLECTOR_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/qshellector"
 QSHELLECTOR_ACTIVE="$QSHELLECTOR_DIR/active"
 QSHELLECTOR_KEYBINDS="$QSHELLECTOR_DIR/keybinds"
+QSHELLECTOR_LOG_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/qshellector/quickshell.log"
 HYPR_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
 
 # ─── Colors (uses terminal theme colors only) ──────────────────────────────
@@ -203,7 +205,8 @@ do_switch() {
 
     # 4. Start new shell
     echo -e "  ${C_DIM}Starting quickshell -c $target...${C_RESET}"
-    nohup quickshell -c "$target" > /tmp/qshellector.log 2>&1 &
+    mkdir -p "$(dirname "$QSHELLECTOR_LOG_FILE")"
+    nohup quickshell -c "$target" > "$QSHELLECTOR_LOG_FILE" 2>&1 &
 
     echo -e "${C_GREEN}✓${C_RESET} Switched to ${C_BOLD}$target${C_RESET}"
 }
@@ -223,7 +226,8 @@ do_restart() {
     sleep 1
 
     # Start fresh
-    nohup quickshell -c "$current" > /dev/null 2>&1 &
+    mkdir -p "$(dirname "$QSHELLECTOR_LOG_FILE")"
+    nohup quickshell -c "$current" > "$QSHELLECTOR_LOG_FILE" 2>&1 &
 
     echo -e "${C_GREEN}✓${C_RESET} Restarted ${C_BOLD}$current${C_RESET}"
 }
@@ -257,7 +261,8 @@ do_fix_tray() {
     sleep 1
 
     # 4. Start quickshell
-    nohup quickshell -c "$current" > /dev/null 2>&1 &
+    mkdir -p "$(dirname "$QSHELLECTOR_LOG_FILE")"
+    nohup quickshell -c "$current" > "$QSHELLECTOR_LOG_FILE" 2>&1 &
 
     # 5. Wait for init
     sleep 2
@@ -267,6 +272,16 @@ do_fix_tray() {
         string:"org.kde.StatusNotifierWatcher" string:":1.dummy" string:":1.dummy2"
 
     echo -e "${C_GREEN}✓${C_RESET} Tray fixed for ${C_BOLD}$current${C_RESET}"
+}
+
+do_log() {
+    if [[ -f "$QSHELLECTOR_LOG_FILE" ]]; then
+        echo -e "${C_CYAN}Watching log at: ${C_DIM}$QSHELLECTOR_LOG_FILE${C_RESET}"
+        echo -e "${C_DIM}(Press Ctrl+C to stop)${C_RESET}"
+        tail -f "$QSHELLECTOR_LOG_FILE"
+    else
+        die "Log file not found at $QSHELLECTOR_LOG_FILE. Has any shell been started?"
+    fi
 }
 
 # ─── Check Process Status ───────────────────────────────────────────────────
@@ -911,7 +926,8 @@ cmd_help() {
     echo "  qshellector switch NAME  Switch to shell by name"
     echo "  qshellector restart      Restart current shell"
     echo "  qshellector fix-tray     Fix system tray (D-Bus cleanup)"
-    echo "  qshellector detect-fonts Re-run TUI font detection"
+    echo "  qshellector detect-fonts Re-run font/icon detection for TUI mode"
+    echo "  qshellector log          Tail the active shell's log"
     echo "  qshellector help         Show this help"
     echo ""
     echo -e "${C_BOLD}TUI Controls:${C_RESET}"
@@ -959,6 +975,9 @@ main() {
             ;;
         "detect-fonts"|"df")
             cmd_detect_fonts
+            ;;
+        "log")
+            do_log
             ;;
         "help"|"-h"|"--help")
             cmd_help

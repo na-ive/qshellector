@@ -79,9 +79,11 @@ Both modes support keyboard navigation, quick switching, and scrolling for large
 ### CLI Commands
 
 ```bash
-qshellector list         # List available shells
-qshellector status       # Show active shell and running state
-qshellector switch NAME  # Switch to a shell by name
+qshellector           # Launch TUI selector
+qshellector list      # List available shells
+qshellector status    # Show active shell
+qshellector switch X  # Switch to shell X
+qshellector log       # Tail the active shell's log
 qshellector restart      # Restart the current shell
 qshellector fix-tray     # Fix system tray (D-Bus cleanup + restart)
 qshellector detect-fonts # Re-run TUI font detection

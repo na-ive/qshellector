@@ -3,7 +3,7 @@ _qshellector_completions() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    cmds="list status switch detect-fonts restart fix-tray help"
+    cmds="list status switch detect-fonts restart fix-tray log help"
 
     if [[ ${COMP_CWORD} == 1 ]]; then
         COMPREPLY=( $(compgen -W "${cmds}" -- ${cur}) )
